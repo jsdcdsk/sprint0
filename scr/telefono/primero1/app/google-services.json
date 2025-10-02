@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "1010018142335",
+    "project_id": "primero-1a9f0",
+    "storage_bucket": "primero-1a9f0.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1010018142335:android:a6b0e255fd189d866e574a",
+        "android_client_info": {
+          "package_name": "com.example.primero"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBhqrewMYP1O8bhLsEjXQaCDIS2YRKvpfA"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
