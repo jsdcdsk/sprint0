@@ -2,34 +2,37 @@
 <html lang="es">
 <head>
   <meta charset="utf-8" />
-  <title>Dispositivos — Datos</title>
+  <title>Dispositivos — Cliente con Fallback Fake</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
   <style>
-    body { padding: 20px; }
-    .table td, .table th { vertical-align: middle; }
+    body { padding:20px }
     .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace; }
+    .spinner { display:inline-block; width:1rem; height:1rem; border:2px solid #ccc; border-top-color:transparent; border-radius:50%; animation:spin 0.8s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
   </style>
 </head>
 <body>
   <div class="container-fluid">
-    <h1 class="mb-3">Dispositivos — Datos originales</h1>
-    <p class="text-muted">Se muestran las columnas tal como existen en la base de datos: id, nombre, mac, rssi, uuid, major, minor, txPower, timestampMs, created_at.</p>
+    <div id="banner"></div>
+
+    <div class="d-flex align-items-center justify-content-between">
+      <h1 class="mb-3">📡 Dispositivos</h1>
+      <div class="btn-group">
+        <button id="btnRefrescar" class="btn btn-sm btn-primary">Refrescar</button>
+        <button id="btnForzarReal" class="btn btn-sm btn-outline-success">Forzar REAL</button>
+        <button id="btnForzarFake" class="btn btn-sm btn-outline-secondary">Forzar FAKE</button>
+      </div>
+    </div>
+
+    <p id="info" class="text-muted">Cargando <span class="spinner"></span></p>
 
     <div class="table-responsive">
       <table class="table table-sm table-striped table-hover align-middle">
-        <thead class="table-light">
+        <thead class="table-dark">
           <tr>
-            <th>ID</th>
-            <th>Nombre</th>
-            <th>MAC</th>
-            <th>RSSI</th>
-            <th>UUID</th>
-            <th>Major</th>
-            <th>Minor</th>
-            <th>TxPower</th>
-            <th>TimestampMs</th>
-            <th>Creado en</th>
+            <th>ID</th><th>Nombre</th><th>MAC</th><th>RSSI</th><th>UUID</th>
+            <th>Major</th><th>Minor</th><th>TxPower</th><th>TimestampMs</th><th>Creado</th>
           </tr>
         </thead>
         <tbody id="tbody" class="mono">
@@ -40,54 +43,137 @@
   </div>
 
   <script>
-    // URL del endpoint que devuelve JSON
-    const ENDPOINT = "https://wjin.upv.edu.es/cliente/dispositivos.php";
+    // ==============================
+    // CONFIG
+    // ==============================
+    // 真实接口地址（如同源可用 /api/dispositivos.php）
+    const ENDPOINT = "https://wjin.upv.edu.es/servidor/dispositivos.php"; 
+
+    // FAKE 数据（用于自动回退或手动强制 fake）
+    const dispositivosFake = [
+      { id: 1001, nombre:"GTI-3A", mac:"AA:BB:CC:11:22:33", rssi:-60, uuid:"EPSG-GTI-PROY-3A", major:2811, minor:500, txPower:-53, timestampMs:1738950093000, created_at:"2025-10-08 14:30:00" },
+      { id: 1002, nombre:"GTI-3A", mac:"AA:BB:CC:11:22:44", rssi:-62, uuid:"EPSG-GTI-PROY-3A", major:3076, minor:10,  txPower:-53, timestampMs:1738950193000, created_at:"2025-10-08 14:32:00" },
+      { id: 1003, nombre:"GTI-3A", mac:"AA:BB:CC:11:22:55", rssi:-58, uuid:"EPSG-GTI-PROY-3A", major:3329, minor:20,  txPower:-53, timestampMs:1738950293000, created_at:"2025-10-08 14:35:00" }
+    ];
+
+    // ==============================
+    // UTILIDADES
+    // ==============================
+    const qs = new URLSearchParams(location.search);
+    const modoUrl = (qs.get("modo")||"").toLowerCase(); // fake | real | ""
 
     function escapar(v){
       if (v === null || v === undefined) return "";
       return String(v).replaceAll("&","&amp;").replaceAll("<","&lt;").replaceAll(">","&gt;");
     }
+    function setInfo(msg){ document.getElementById("info").innerHTML = escapar(msg); }
+    function setBanner(html){ document.getElementById("banner").innerHTML = html; }
+    function limpiarBanner(){ setBanner(""); }
 
-    async function cargarDatos(){
+    function renderTabla(filas){
       const tbody = document.getElementById("tbody");
+      if (!filas || !filas.length){
+        tbody.innerHTML = `<tr><td colspan="10" class="text-center text-muted">No hay datos</td></tr>`;
+        return;
+      }
+      tbody.innerHTML = filas.map(r=>`
+        <tr>
+          <td>${escapar(r.id)}</td>
+          <td>${escapar(r.nombre)}</td>
+          <td>${escapar(r.mac)}</td>
+          <td>${escapar(r.rssi)}</td>
+          <td>${escapar(r.uuid)}</td>
+          <td>${escapar(r.major)}</td>
+          <td>${escapar(r.minor)}</td>
+          <td>${escapar(r.txPower)}</td>
+          <td>${escapar(r.timestampMs)}</td>
+          <td>${escapar(r.created_at)}</td>
+        </tr>
+      `).join("");
+    }
+
+    // 超时版 fetch
+    async function fetchConTimeout(url, opciones={}, ms=6000){
+      const ctrl = new AbortController();
+      const id = setTimeout(()=>ctrl.abort(new Error("timeout")), ms);
       try {
-        const res = await fetch(ENDPOINT, { headers: { "Accept": "application/json" } });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const texto = await res.text();
-        let datos;
-        try { datos = JSON.parse(texto); }
-        catch { throw new Error("La respuesta no es JSON válido"); }
-
-        const filas = Array.isArray(datos) ? datos : (datos && datos.ok === true && Array.isArray(datos.rows) ? datos.rows : []);
-        if (!filas.length){
-          tbody.innerHTML = `<tr><td colspan="10" class="text-center text-muted">No hay datos disponibles</td></tr>`;
-          return;
-        }
-
-        const html = filas.map(r => `
-          <tr>
-            <td>${escapar(r.id)}</td>
-            <td>${escapar(r.nombre)}</td>
-            <td>${escapar(r.mac)}</td>
-            <td>${escapar(r.rssi)}</td>
-            <td>${escapar(r.uuid)}</td>
-            <td>${escapar(r.major)}</td>
-            <td>${escapar(r.minor)}</td>
-            <td>${escapar(r.txPower)}</td>
-            <td>${escapar(r.timestampMs)}</td>
-            <td>${escapar(r.created_at)}</td>
-          </tr>
-        `).join("");
-        tbody.innerHTML = html;
-
-      } catch (e){
-        tbody.innerHTML = `<tr><td colspan="10" class="text-danger">Error al cargar: ${escapar(e.message)}</td></tr>`;
-        console.error(e);
+        const resp = await fetch(url, { ...opciones, signal: ctrl.signal, cache: "no-store", headers: { "Accept":"application/json", ...(opciones.headers||{}) } });
+        clearTimeout(id);
+        return resp;
+      } catch(e){
+        clearTimeout(id);
+        throw e;
       }
     }
 
-    // Cargar los datos al abrir la página
-    cargarDatos();
+    // ==============================
+    // RENDER FAKE
+    // ==============================
+    function mostrarFake(motivo){
+      setBanner(`
+        <div class="alert alert-warning d-flex align-items-center" role="alert">
+          <div><strong>Modo FAKE activado</strong>${motivo ? " — "+escapar(motivo) : ""}</div>
+        </div>
+      `);
+      setInfo("Mostrando datos simulados");
+      renderTabla(dispositivosFake);
+    }
+
+    // ==============================
+    // RENDER REAL
+    // ==============================
+    async function mostrarReal(){
+      limpiarBanner();
+      setInfo('Cargando datos reales… <span class="spinner"></span>');
+      const tbody = document.getElementById("tbody");
+      tbody.innerHTML = `<tr><td colspan="10" class="text-center text-muted">Cargando…</td></tr>`;
+
+      try {
+        const res = await fetchConTimeout(ENDPOINT, {}, 6000);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const txt = await res.text();
+
+        let datos;
+        try { datos = JSON.parse(txt); }
+        catch { throw new Error("La respuesta no es JSON válido"); }
+
+        // Soportar 2 formatos: [ ... ] o { ok:true, rows:[ ... ] }
+        const filas = Array.isArray(datos) ? datos : (datos && datos.ok === true && Array.isArray(datos.rows) ? datos.rows : null);
+        if (!Array.isArray(filas)) throw new Error("Estructura JSON inesperada");
+
+        setInfo(`Cargadas ${filas.length} filas (real)`);
+        renderTabla(filas);
+      } catch(e){
+        // 失败则回退到 FAKE
+        mostrarFake(e.message || "Error de red");
+      }
+    }
+
+    // ==============================
+    // INIT
+    // ==============================
+    async function init(){
+      // URL 强制模式
+      if (modoUrl === "fake") return mostrarFake("Forzado por ?modo=fake");
+      if (modoUrl === "real") return mostrarReal();
+
+      // 默认先尝试 REAL，失败则自动 FAKE
+      await mostrarReal();
+    }
+
+    // 事件
+    document.getElementById("btnRefrescar").addEventListener("click", ()=> {
+      if (document.querySelector(".alert-warning")) { // en fake
+        mostrarFake("Actualizado (fake)");
+      } else {
+        mostrarReal();
+      }
+    });
+    document.getElementById("btnForzarReal").addEventListener("click", mostrarReal);
+    document.getElementById("btnForzarFake").addEventListener("click", ()=>mostrarFake("Forzado manualmente"));
+
+    // GO
+    init();
   </script>
 </body>
 </html>
